@@ -5,28 +5,19 @@
 
 ## Lista plików i co robią
 
-### Swift (logika aplikacji)
-
 | Plik | Rola |
 |------|------|
-| `BoxingTimerApp.swift` | Punkt wejścia (`@main`). Prosi o pozwolenie na powiadomienia przy starcie. |
-| `ContentView.swift` | Główny `TabView` (Trening / Historia) + `TimerSetupView` + `FireSettingCard` + `SessionSummaryBar` + `Color(hex:)` extension. |
-| `TimerView.swift` | Pełnoekranowy widok timera — **tylko UI**, logika w `TimerViewModel`. Obsługuje `scenePhase` do background recovery. Pokazuje `CompletionOverlay` po ukończeniu. |
-| `TimerViewModel.swift` | **Cała logika timera**: fazy (gotowość/runda/przerwa), background recovery (`recoverFromElapsed`), zapis sesji, obsługa `handleBackground/handleForeground`. |
-| `NotificationManager.swift` | Singleton `UNUserNotificationCenter`. Planuje powiadomienie dla każdej zmiany fazy gdy app idzie w tło (maks 30 notyfikacji). |
-| `SoundManager.swift` | Singleton `AVAudioPlayer` + `UIImpactFeedbackGenerator`. Metody: `playRoundStart()` (gong + heavy haptic), `playRoundEnd()` (bell + medium haptic), `playWorkoutComplete()` (bell×2 + success haptic). |
-| `TrainingStore.swift` | Model `TrainingSession: Codable` + singleton store z persistencją w `UserDefaults`. |
-| `HistoryView.swift` | Historia i statystyki zbiorcze. |
-| `Item.swift` | Pusty plik (usunięto SwiftData `@Model` — był nieużywany). |
-
-### Zasoby
-
-| Zasób | Opis |
-|-------|------|
-| `Assets.xcassets/bell2.dataset/bell2.mp3` | Dźwięk końca rundy |
-| `Assets.xcassets/bell3.dataset/bell3.mp3` | Dźwięk zakończenia treningu |
-| `Assets.xcassets/gong.dataset/gong.mp3` | Dźwięk startu rundy / końca przerwy |
-| `Assets.xcassets/AppIcon.appiconset/` | Ikona aplikacji |
+| `BoxingTimerApp.swift` | Punkt wejścia `@main`. |
+| `ContentView.swift` | TabView (Trening / Historia) + `TimerSetupView` + komponenty UI. Prosi o uprawnienia HealthKit i Notifications w `onAppear`. |
+| `TimerView.swift` | Pełnoekranowy timer — czysty View. Live tętno z Apple Watch (`HeartRateDisplay`), `CompletionOverlay` po ukończeniu, scenePhase onChange. |
+| `TimerViewModel.swift` | Cała logika: fazy, background recovery, zapis sesji. Wywołuje HealthKit start/stop. |
+| `HistoryView.swift` | `List` z swipe-to-delete per sesja. Siatka statystyk ze zbiorczym tętnem. `SessionRow` wyświetla avg/max HR jeśli dostępne z Watch. |
+| `HealthKitManager.swift` | Singleton HealthKit. `startWorkout()` → `HKWorkoutBuilder` typ `.boxing`. `finishWorkout()` async → zapisuje trening do Health app + zwraca avg/max HR z Watch. Live HR przez `HKObserverQuery`. |
+| `NotificationManager.swift` | Planuje `UNUserNotification` dla każdej zmiany fazy w tle. |
+| `SoundManager.swift` | AVAudioPlayer + `UIImpactFeedbackGenerator` (heavy/medium/success). |
+| `TrainingStore.swift` | `TrainingSession: Codable` z polami `avgHeartRate`, `maxHeartRate`. Metody: `save`, `update`, `remove(at:)`, `clearAll`. |
+| `GIT_BOXING.entitlements` | HealthKit entitlement (`com.apple.developer.healthkit`). |
+| `Item.swift` | Pusty plik (nieużywany). |
 
 ---
 
@@ -34,53 +25,57 @@
 
 ```
 BoxingTimerApp
-├── init() → NotificationManager.requestPermission()
 └── ContentView (TabView)
-    ├── Tab 0: TimerSetupView
-    │   └── fullScreenCover → TimerView
-    │       ├── @StateObject TimerViewModel  ← cała logika timera
-    │       │   ├── Timer.scheduledTimer
-    │       │   ├── handleBackground() → NotificationManager.schedulePhaseNotifications()
-    │       │   ├── handleForeground() → recoverFromElapsed() + cancelAll()
-    │       │   └── TrainingStore.save()
-    │       ├── SoundManager.shared  ← dźwięki + haptyki
-    │       └── @Environment(\.scenePhase) → handleBackground/handleForeground
+    ├── Tab 0: TimerSetupView → fullScreenCover → TimerView
+    │   ├── @StateObject TimerViewModel  ← logika
+    │   │   ├── HealthKitManager.startWorkout() / finishWorkout()
+    │   │   ├── NotificationManager (background notifications)
+    │   │   └── TrainingStore.save() + update()
+    │   └── @ObservedObject HealthKitManager ← live HR display
     └── Tab 1: HistoryView
-        └── TrainingStore.shared (odczyt)
+        └── TrainingStore.shared (List + onDelete)
 ```
 
-**Persystencja:** `UserDefaults` (klucz `boxing_training_sessions`), JSON przez `Codable`.
+**HealthKit flow:**
+1. `ContentView.onAppear` → `requestAuthorization()` (dialog jednorazowy)
+2. `TimerViewModel.onAppear` → `startWorkout()` → HKWorkoutBuilder typ `.boxing` + HKObserverQuery dla live HR
+3. Trening kończy się → `saveSession()` → `finishWorkout()` async → zapisuje do Health.app → pobiera avg/max HR → `TrainingStore.update()`
+4. Historii sesja pokazuje tętno jeśli Watch je zmierzył
+
+**Dane z Apple Watch:**
+- Live HR podczas treningu: `HKObserverQuery` (aktualizuje się gdy Watch wyśle nową próbkę, co ~5-10 min w trybie normalnym)
+- Post-workout HR: `HKStatisticsQuery` za cały czas trwania treningu
+- Trening zapisany w aplikacji Fitness/Zdrowie i liczy się do kółek aktywności
 
 ---
 
-## Aktualny stan funkcji
+## Stan funkcji
 
-### Działa / zaimplementowane
-- Konfiguracja treningu: czas rundy (10–600s), przerwa (5–180s), liczba rund (1–20)
-- Faza przygotowawcza 5s + animowany ring timer + zmiana koloru tła z fazą
-- **Background recovery**: gdy app jest w tle, po powrocie timer odtwarza wszystkie przejścia faz które minęły
-- **Lokalne powiadomienia**: gdy app idzie w tło, planowane są notyfikacje dla każdej zmiany fazy (gong/bell w powiadomieniach)
-- **Haptic feedback**: heavy impact na start rundy, medium na koniec rundy, `.success` na ukończenie treningu
-- Ekran ukończenia treningu (`CompletionOverlay`) po ostatniej rundzie
-- Zapis każdej sesji (ukończonej i przerwanej) do `UserDefaults`
-- Historia z statystykami zbiorczymi, usuwanie historii
-- Auto-lock wyłączony podczas treningu
-- Dark mode, motyw czerwono-czarny
+### Działa (zaimplementowane)
+- Timer z fazami: gotowość → runda → przerwa → ...
+- Background recovery (timestamp + local notifications)
+- Haptic feedback (heavy/medium/success)
+- **HealthKit**: zapis treningu do Health app, odczyt tętna z Watch
+- **Historia**: swipe-to-delete per sesja + usuń wszystkie
+- **Live HR** na ekranie timera (z Watch)
+- **HR w historii**: avg i max per sesja + zbiorcze statystyki
 
-### Otwarte problemy / TODO
-- [ ] **Pełne tło** — background recovery działa przez timestamp, ale Timer jest zatrzymany gdy ekran jest zablokowany. Dla ciągłego działania potrzebny entitlement `UIBackgroundModes: audio` + ciągła sesja AVAudioSession (silent looping). Obecne rozwiązanie: powiadomienia jako fallback.
-- [ ] **Wibracje bez dźwięku** — `UIImpactFeedbackGenerator` działa tylko gdy app jest aktywny (nie w tle)
-- [ ] **Usuwanie pojedynczej sesji** — historia pozwala tylko wyczyścić wszystko
-- [ ] **Eksport danych** — brak
-- [ ] **Widget / Live Activity** — brak
-- [ ] **Testy jednostkowe** — brak (`TimerViewModel` jest teraz testowalny)
+### Wymagane działania w Xcode (jednorazowe)
+- [ ] **Signing & Capabilities → Add "HealthKit"** — bez tego entitlement nie zadziała na urządzeniu
+- HealthKit capability musi być włączona ręcznie w Xcode, nie da się przez pbxproj
+
+### Otwarte TODO
+- [ ] WatchKit app — dla ciągłego HR co 1s podczas treningu (zamiast co 5-10 min z tła Watch)
+- [ ] Usuwanie pojedynczej sesji z edycją (np. zmiana notatki)
+- [ ] Eksport danych (CSV / Share Sheet)
+- [ ] Testy jednostkowe (TimerViewModel jest testowalny)
 
 ---
 
-## Ostatnie zmiany
+## Ostatnie zmiany (git)
 
-| Hash | Opis |
-|------|------|
-| (pending) | Must-have refactor: TimerViewModel, NotificationManager, haptics, background recovery |
-| `3b407c9` | Initial commit - GIT BOXING app |
-| `742bee7` | Initial Commit |
+| Commit | Opis |
+|--------|------|
+| (pending) | HealthKit, historia edytowalna, live HR, swipe-delete |
+| `602bb01` | Must-have refactor: TimerViewModel, notifications, haptics, background |
+| `3b407c9` | Initial commit GIT BOXING app |

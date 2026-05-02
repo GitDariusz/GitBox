@@ -2,15 +2,18 @@ import Foundation
 import SwiftUI
 
 // MARK: - Model sesji treningowej
+
 struct TrainingSession: Codable, Identifiable {
     let id: UUID
     let date: Date
     let rounds: Int
-    let roundTime: Int       // sekundy
-    let breakTime: Int       // sekundy
+    let roundTime: Int
+    let breakTime: Int
     let completedRounds: Int
-    let totalDuration: Int   // sekundy (faktyczny czas)
+    let totalDuration: Int
     let wasCompleted: Bool
+    var avgHeartRate: Double?
+    var maxHeartRate: Double?
 
     var activeTime: Int { completedRounds * roundTime }
     var breaksTaken: Int { max(0, completedRounds - 1) }
@@ -23,20 +26,19 @@ struct TrainingSession: Codable, Identifiable {
         breakTime: Int,
         completedRounds: Int,
         totalDuration: Int,
-        wasCompleted: Bool
+        wasCompleted: Bool,
+        avgHeartRate: Double? = nil,
+        maxHeartRate: Double? = nil
     ) {
-        self.id = id
-        self.date = date
-        self.rounds = rounds
-        self.roundTime = roundTime
-        self.breakTime = breakTime
-        self.completedRounds = completedRounds
-        self.totalDuration = totalDuration
-        self.wasCompleted = wasCompleted
+        self.id = id; self.date = date; self.rounds = rounds; self.roundTime = roundTime
+        self.breakTime = breakTime; self.completedRounds = completedRounds
+        self.totalDuration = totalDuration; self.wasCompleted = wasCompleted
+        self.avgHeartRate = avgHeartRate; self.maxHeartRate = maxHeartRate
     }
 }
 
-// MARK: - Store treningów (UserDefaults)
+// MARK: - Store (UserDefaults)
+
 class TrainingStore: ObservableObject {
     static let shared = TrainingStore()
 
@@ -44,12 +46,21 @@ class TrainingStore: ObservableObject {
 
     private let key = "boxing_training_sessions"
 
-    private init() {
-        load()
-    }
+    private init() { load() }
 
     func save(session: TrainingSession) {
         sessions.insert(session, at: 0)
+        persist()
+    }
+
+    func update(session: TrainingSession) {
+        guard let idx = sessions.firstIndex(where: { $0.id == session.id }) else { return }
+        sessions[idx] = session
+        persist()
+    }
+
+    func remove(at offsets: IndexSet) {
+        sessions.remove(atOffsets: offsets)
         persist()
     }
 
@@ -58,7 +69,8 @@ class TrainingStore: ObservableObject {
         persist()
     }
 
-    // Statystyki
+    // MARK: - Statystyki
+
     var totalSessions: Int { sessions.count }
     var totalActiveTime: Int { sessions.reduce(0) { $0 + $1.activeTime } }
     var totalRounds: Int { sessions.reduce(0) { $0 + $1.completedRounds } }
@@ -69,7 +81,19 @@ class TrainingStore: ObservableObject {
         return Double(totalRounds) / Double(sessions.count)
     }
 
-    private func persist() {
+    var overallAvgHeartRate: Double? {
+        let withHR = sessions.compactMap { $0.avgHeartRate }
+        guard !withHR.isEmpty else { return nil }
+        return (withHR.reduce(0, +) / Double(withHR.count)).rounded()
+    }
+
+    var overallMaxHeartRate: Double? {
+        sessions.compactMap { $0.maxHeartRate }.max()
+    }
+
+    // MARK: - Persistence
+
+    func persist() {
         if let data = try? JSONEncoder().encode(sessions) {
             UserDefaults.standard.set(data, forKey: key)
         }

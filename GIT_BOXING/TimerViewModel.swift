@@ -18,6 +18,7 @@ final class TimerViewModel: ObservableObject {
     private var sessionStartTime: Date = Date()
     private var backgroundEntryDate: Date?
     private var wasRunningBeforeBackground: Bool = false
+    private var savedSessionId: UUID?
 
     init(roundTime: Int, breakTime: Int, rounds: Int) {
         self.roundTime = roundTime
@@ -60,6 +61,7 @@ final class TimerViewModel: ObservableObject {
     func onAppear() {
         sessionStartTime = Date()
         pulse = true
+        HealthKitManager.shared.startWorkout()
         startPhase()
     }
 
@@ -144,7 +146,6 @@ final class TimerViewModel: ObservableObject {
         if !isFinished { startPhase() }
     }
 
-    // Symuluje przejścia faz które wystąpiły w tle
     private func recoverFromElapsed(_ elapsed: Int) {
         guard elapsed > 0 else { return }
         var remaining = timeRemaining
@@ -188,11 +189,14 @@ final class TimerViewModel: ObservableObject {
         timeRemaining = remaining
     }
 
-    // MARK: - Persistence
+    // MARK: - Persistence + HealthKit
 
     func saveSession(completed: Bool) {
         let duration = Int(Date().timeIntervalSince(sessionStartTime))
+        let sessionId = UUID()
+        savedSessionId = sessionId
         let session = TrainingSession(
+            id: sessionId,
             rounds: rounds,
             roundTime: roundTime,
             breakTime: breakTime,
@@ -201,5 +205,21 @@ final class TimerViewModel: ObservableObject {
             wasCompleted: completed
         )
         TrainingStore.shared.save(session: session)
+
+        // Async: zakończ trening w HealthKit i zaktualizuj sesję o tętno
+        Task {
+            let (avgHR, maxHR) = await HealthKitManager.shared.finishWorkout()
+            guard avgHR != nil || maxHR != nil else { return }
+            var updated = session
+            updated.avgHeartRate = avgHR
+            updated.maxHeartRate = maxHR
+            await MainActor.run {
+                TrainingStore.shared.update(session: updated)
+            }
+        }
+    }
+
+    func cancelSession() {
+        HealthKitManager.shared.cancelWorkout()
     }
 }

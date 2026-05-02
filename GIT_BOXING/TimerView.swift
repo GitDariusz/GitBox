@@ -7,6 +7,7 @@ struct TimerView: View {
     var onDismiss: () -> Void
 
     @StateObject private var vm: TimerViewModel
+    @ObservedObject private var healthKit = HealthKitManager.shared
     @Environment(\.scenePhase) private var scenePhase
 
     init(roundTime: Int, breakTime: Int, rounds: Int, onDismiss: @escaping () -> Void) {
@@ -21,7 +22,6 @@ struct TimerView: View {
         ZStack {
             Color.black.edgesIgnoringSafeArea(.all)
 
-            // Glow tła zmienia kolor z fazą
             GeometryReader { geo in
                 Circle()
                     .fill(RadialGradient(
@@ -55,7 +55,7 @@ struct TimerView: View {
 
                     Spacer()
 
-                    // Licznik rund w kółkach
+                    // Kółka rund
                     HStack(spacing: 6) {
                         ForEach(1...rounds, id: \.self) { r in
                             Circle()
@@ -84,12 +84,9 @@ struct TimerView: View {
 
                 Spacer().frame(height: 30)
 
-                // Timer z pierścieniem
+                // Ring timer
                 ZStack {
-                    Circle()
-                        .stroke(Color.white.opacity(0.06), lineWidth: 12)
-                        .frame(width: 240, height: 240)
-
+                    Circle().stroke(Color.white.opacity(0.06), lineWidth: 12).frame(width: 240, height: 240)
                     Circle()
                         .trim(from: 0, to: vm.progress)
                         .stroke(
@@ -110,7 +107,6 @@ struct TimerView: View {
                             .foregroundColor(.white)
                             .contentTransition(.numericText(countsDown: true))
                             .animation(.spring(response: 0.4), value: vm.timeRemaining)
-
                         if !vm.isPreparation {
                             Text(vm.isBreak ? "do rundy \(vm.currentRound + 1)" : "rundy \(vm.currentRound)/\(rounds)")
                                 .font(.system(size: 13, weight: .medium))
@@ -119,7 +115,12 @@ struct TimerView: View {
                     }
                 }
 
-                Spacer().frame(height: 50)
+                Spacer().frame(height: 24)
+
+                // Live tętno z Apple Watch
+                HeartRateDisplay(heartRate: healthKit.currentHeartRate)
+
+                Spacer().frame(height: 26)
 
                 // Pause / play
                 Button(action: { vm.togglePause() }) {
@@ -140,7 +141,7 @@ struct TimerView: View {
                 Spacer().frame(height: 40)
             }
 
-            // Ekran ukończenia treningu
+            // Ekran ukończenia
             if vm.isFinished {
                 CompletionOverlay(rounds: rounds)
                     .transition(.opacity)
@@ -176,6 +177,46 @@ struct TimerView: View {
     }
 }
 
+// MARK: - Live tętno
+
+struct HeartRateDisplay: View {
+    let heartRate: Double?
+
+    var body: some View {
+        Group {
+            if let hr = heartRate {
+                HStack(spacing: 6) {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.red)
+                        .symbolEffect(.pulse)
+                    Text("\(Int(hr))")
+                        .font(.system(size: 20, weight: .black, design: .rounded))
+                        .foregroundColor(.white)
+                        .contentTransition(.numericText())
+                    Text("BPM")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.4))
+                        .kerning(1)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 8)
+                .background(Color.white.opacity(0.06))
+                .clipShape(Capsule())
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "applewatch")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color.white.opacity(0.2))
+                    Text("Brak danych z Watch")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color.white.opacity(0.2))
+                }
+            }
+        }
+        .animation(.easeInOut, value: heartRate)
+    }
+}
+
 // MARK: - Ekran ukończenia
 
 struct CompletionOverlay: View {
@@ -185,8 +226,7 @@ struct CompletionOverlay: View {
         ZStack {
             Color.black.opacity(0.92).edgesIgnoringSafeArea(.all)
             VStack(spacing: 20) {
-                Text("🏆")
-                    .font(.system(size: 80))
+                Text("🏆").font(.system(size: 80))
                 Text("TRENING\nUKOŃCZONY!")
                     .font(.system(size: 36, weight: .black, design: .rounded))
                     .foregroundColor(.white)

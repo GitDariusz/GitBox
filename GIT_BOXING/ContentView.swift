@@ -19,6 +19,10 @@ struct ContentView: View {
         }
         .accentColor(Color(hex: "FF4500"))
         .preferredColorScheme(.dark)
+        .onAppear {
+            NotificationManager.shared.requestPermission()
+            Task { await HealthKitManager.shared.requestAuthorization() }
+        }
     }
 }
 
