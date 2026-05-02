@@ -1,15 +1,11 @@
-//
-//  BoxingTimerApp.swift
-//  GIT_BOXING
-//
-//  Created by Dariusz Kuczynski on 28/02/2025.
-//
-
-
 import SwiftUI
 
 @main
 struct BoxingTimerApp: App {
+    init() {
+        NotificationManager.shared.requestPermission()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

@@ -17,7 +17,7 @@ struct ContentView: View {
                 }
                 .tag(1)
         }
-        .accentColor(Color("FireRed"))
+        .accentColor(Color(hex: "FF4500"))
         .preferredColorScheme(.dark)
     }
 }
